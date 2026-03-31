@@ -275,19 +275,38 @@ async function submitToNotion(disposition, formData) {
   const content = buildNotionContent(disposition, formData);
   const v = (id) => formData[id]?.trim() || "";
   const apiExists = v("write_api") && v("write_api").toLowerCase() !== "unknown" && v("write_api").length > 5 ? "Yes" : "Unknown";
-  const prompt = `Create a Notion page in the TuneCore dispositions database using the notion MCP.\n\ndata_source_id: c6c3431b-0b7d-45cf-be5e-9c13ad36b423\n\nProperties:\n- Service: "${disposition}"\n- Entrypoint: "${v("artist_entrypoint")} | Agent: ${v("agent_entrypoint")}"\n- Required intake fields: "${v("must_have")}"\n- System reads: "${v("data_needed")} via ${v("system_of_record")}"\n- System writes: "${v("action_name")} — ${v("action_execution")}"\n- Human gate: "${v("human_approval")} — ${v("approver")}"\n- Done output: "${v("artist_receives")}"\n- API exists?: "${apiExists}"\n- API notes: "${v("write_api")}"\n- Category: "Complete"\n\nPage body:\n${content}\n\nRespond with only the Notion page URL.`;
   const resp = await fetch("/api/submit-to-notion", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({
+      disposition,
+      properties: {
+        Service: disposition,
+        Entrypoint: `${v("artist_entrypoint")} | Agent: ${v("agent_entrypoint")}`,
+        "Required intake fields": v("must_have"),
+        "System reads": `${v("data_needed")} via ${v("system_of_record")}`,
+        "System writes": `${v("action_name")} — ${v("action_execution")}`,
+        "Human gate": `${v("human_approval")} — ${v("approver")}`,
+        "Done output": v("artist_receives"),
+        "API exists?": apiExists,
+        "API notes": v("write_api"),
+        Category: "Complete",
+      },
+      content,
+    }),
   });
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error.message || "API error");
-  const text = data.content.filter((b) => b.type === "text").map((b) => b.text).join(" ");
-  const match = text.match(/https:\/\/(?:www\.)?notion\.so\/\S+/);
-  return match ? match[0].replace(/[.,)\]]+$/, "") : null;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.error) {
+    const msg =
+      data?.error?.message ||
+      data?.error?.details?.message ||
+      data?.error?.details?.error ||
+      "API error";
+    throw new Error(msg);
+  }
+  return data?.url || null;
 }
 
 function SampleHint({ fieldId }) {
