@@ -32,22 +32,87 @@ export default async function handler(req, res) {
       return;
     }
 
-    const notionProperties = {};
+    const notionRequest = async (url, init) => {
+      const upstream = await fetch(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${notionToken}`,
+          "Content-Type": "application/json",
+          "Notion-Version": "2022-06-28",
+          ...(init?.headers || {}),
+        },
+      });
+      const data = await upstream.json().catch(() => ({}));
+      return { upstream, data };
+    };
+
     const ensureRichText = (text) => ({
       rich_text: [{ type: "text", text: { content: String(text || "") } }],
     });
+    const ensureTitle = (text) => ({
+      title: [{ type: "text", text: { content: String(text || "") } }],
+    });
 
-    // Most databases have a title property. We don't know its name, so we try "Service" first.
-    // If the database's title property is named differently, Notion will return a helpful error
-    // telling us which property is the title.
-    notionProperties.Service = {
-      title: [{ type: "text", text: { content: disposition } }],
+    // Fetch database schema so we can use the real title property name and only write valid props.
+    const { upstream: dbResp, data: db } = await notionRequest(
+      `https://api.notion.com/v1/databases/${notionDatabaseId}`,
+      { method: "GET", headers: { "Content-Type": undefined } }
+    );
+    if (!dbResp.ok) {
+      sendError(
+        dbResp.status,
+        db?.message || db?.error || "Failed to read Notion database schema",
+        db
+      );
+      return;
+    }
+
+    const dbProps = db?.properties || {};
+    const titlePropName =
+      Object.entries(dbProps).find(([, p]) => p?.type === "title")?.[0] || null;
+    if (!titlePropName) {
+      sendError(500, "No title property found on Notion database", db);
+      return;
+    }
+
+    const notionProperties = {
+      [titlePropName]: ensureTitle(disposition),
     };
 
+    // Best-effort mapping of provided properties into existing database properties.
     if (properties && typeof properties === "object") {
       for (const [k, v] of Object.entries(properties)) {
-        if (k === "Service") continue; // already mapped as title
-        notionProperties[k] = ensureRichText(v);
+        const schema = dbProps?.[k];
+        if (!schema) continue;
+
+        if (schema.type === "title") {
+          notionProperties[k] = ensureTitle(v);
+          continue;
+        }
+        if (schema.type === "rich_text") {
+          notionProperties[k] = ensureRichText(v);
+          continue;
+        }
+        if (schema.type === "select") {
+          notionProperties[k] = { select: v ? { name: String(v) } : null };
+          continue;
+        }
+        if (schema.type === "status") {
+          notionProperties[k] = { status: v ? { name: String(v) } : null };
+          continue;
+        }
+        if (schema.type === "multi_select") {
+          const arr = Array.isArray(v) ? v : String(v || "").split(",").map((s) => s.trim()).filter(Boolean);
+          notionProperties[k] = { multi_select: arr.map((name) => ({ name })) };
+          continue;
+        }
+        if (schema.type === "checkbox") {
+          notionProperties[k] = { checkbox: Boolean(v) && String(v).toLowerCase() !== "false" };
+          continue;
+        }
+
+        // Fallback: attempt rich_text if schema type is unsupported by this mapper.
+        // (We still avoid writing invalid property shapes.)
       }
     }
 
@@ -76,13 +141,8 @@ export default async function handler(req, res) {
       }
     }
 
-    const upstream = await fetch("https://api.notion.com/v1/pages", {
+    const { upstream, data } = await notionRequest("https://api.notion.com/v1/pages", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${notionToken}`,
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
-      },
       body: JSON.stringify({
         parent: { database_id: notionDatabaseId },
         properties: notionProperties,
@@ -90,7 +150,6 @@ export default async function handler(req, res) {
       }),
     });
 
-    const data = await upstream.json();
     if (!upstream.ok) {
       const message =
         data?.message ||
