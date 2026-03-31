@@ -276,10 +276,12 @@ async function submitToNotion(disposition, formData) {
   const v = (id) => formData[id]?.trim() || "";
   const apiExists = v("write_api") && v("write_api").toLowerCase() !== "unknown" && v("write_api").length > 5 ? "Yes" : "Unknown";
   const prompt = `Create a Notion page in the TuneCore dispositions database using the notion MCP.\n\ndata_source_id: c6c3431b-0b7d-45cf-be5e-9c13ad36b423\n\nProperties:\n- Service: "${disposition}"\n- Entrypoint: "${v("artist_entrypoint")} | Agent: ${v("agent_entrypoint")}"\n- Required intake fields: "${v("must_have")}"\n- System reads: "${v("data_needed")} via ${v("system_of_record")}"\n- System writes: "${v("action_name")} — ${v("action_execution")}"\n- Human gate: "${v("human_approval")} — ${v("approver")}"\n- Done output: "${v("artist_receives")}"\n- API exists?: "${apiExists}"\n- API notes: "${v("write_api")}"\n- Category: "Complete"\n\nPage body:\n${content}\n\nRespond with only the Notion page URL.`;
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const resp = await fetch("/api/submit-to-notion", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, mcp_servers: [{ type: "url", url: "https://mcp.notion.com/mcp", name: "notion" }], messages: [{ role: "user", content: prompt }] }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt }),
   });
   const data = await resp.json();
   if (data.error) throw new Error(data.error.message || "API error");
@@ -359,6 +361,27 @@ function FieldRenderer({ field, value, onChange }) {
   return <TextField field={field} value={value} onChange={onChange} />;
 }
 
+function Header({ progress, section, step }) {
+  return (
+    <div style={{ position: "sticky", top: 0, zIndex: 30, background: "rgba(7,8,14,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${IL.border}` }}>
+      {progress !== undefined && <div style={{ height: "2px", background: IL.border }}><div style={{ height: "100%", width: `${progress * 100}%`, background: IL.gradient, transition: "width 0.4s ease" }} /></div>}
+      <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0 24px", height: "54px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <img src={LOGO_URL} alt="IntuitioLabs" style={{ height: "20px", opacity: 0.9 }} />
+        {progress !== undefined && section ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            {SECTIONS.map((s, i) => <div key={s.id} style={{ borderRadius: "999px", background: i + 1 < step ? IL.accent : i + 1 === step ? IL.accentLight : IL.border, width: i + 1 === step ? "18px" : "6px", height: "6px", transition: "all 0.3s" }} />)}
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <img src={STAR_URL} alt="" style={{ height: "13px", opacity: 0.75 }} />
+            <span style={{ fontSize: "10px", color: IL.textMuted, fontFamily: "'DM Mono', monospace", letterSpacing: "0.12em" }}>AI PRACTICE</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [disposition, setDisposition] = useState("");
@@ -382,28 +405,9 @@ export default function App() {
 
   const wrap = { minHeight: "100vh", background: IL.bg, color: IL.textPrimary, fontFamily: "'Plus Jakarta Sans', sans-serif" };
 
-  const Header = ({ progress }) => (
-    <div style={{ position: "sticky", top: 0, zIndex: 30, background: "rgba(7,8,14,0.92)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${IL.border}` }}>
-      {progress !== undefined && <div style={{ height: "2px", background: IL.border }}><div style={{ height: "100%", width: `${progress * 100}%`, background: IL.gradient, transition: "width 0.4s ease" }} /></div>}
-      <div style={{ maxWidth: "720px", margin: "0 auto", padding: "0 24px", height: "54px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <img src={LOGO_URL} alt="IntuitioLabs" style={{ height: "20px", opacity: 0.9 }} />
-        {progress !== undefined && section ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            {SECTIONS.map((s, i) => <div key={s.id} style={{ borderRadius: "999px", background: i + 1 < step ? IL.accent : i + 1 === step ? IL.accentLight : IL.border, width: i + 1 === step ? "18px" : "6px", height: "6px", transition: "all 0.3s" }} />)}
-          </div>
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <img src={STAR_URL} alt="" style={{ height: "13px", opacity: 0.75 }} />
-            <span style={{ fontSize: "10px", color: IL.textMuted, fontFamily: "'DM Mono', monospace", letterSpacing: "0.12em" }}>AI PRACTICE</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   if (step === 0) return (
     <div style={wrap}>
-      <Header />
+      <Header step={step} section={section} />
       <div style={{ maxWidth: "540px", margin: "0 auto", padding: "72px 24px 120px" }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: IL.accentDim, border: `1px solid ${IL.accentBorder}`, borderRadius: "999px", padding: "5px 14px", marginBottom: "28px" }}>
           <img src={STAR_URL} alt="" style={{ height: "11px" }} />
@@ -432,7 +436,7 @@ export default function App() {
 
   if (result) return (
     <div style={wrap}>
-      <Header />
+      <Header step={step} section={section} />
       <div style={{ maxWidth: "460px", margin: "0 auto", padding: "80px 24px", textAlign: "center" }}>
         {result.success ? (
           <>
@@ -461,7 +465,7 @@ export default function App() {
 
   return (
     <div style={wrap}>
-      <Header progress={step / totalSteps} />
+      <Header progress={step / totalSteps} step={step} section={section} />
       <div style={{ maxWidth: "720px", margin: "0 auto", padding: "44px 24px 130px" }}>
         <div style={{ marginBottom: "36px" }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", background: IL.accentDim, border: `1px solid ${IL.accentBorder}`, borderRadius: "999px", padding: "4px 14px", marginBottom: "16px" }}>
